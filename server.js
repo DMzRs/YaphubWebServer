@@ -17,7 +17,7 @@ app.use(express.json());
 
 // Enable CORS
 app.use(cors({
-    origin: process.env.CORS_ORIGINS || "https://yaphubers.ct.ws", // Use environment variable
+    origin: process.env.CORS_ORIGINS.split(','), // Use environment variable
     methods: ["GET", "POST"],
     credentials: true
 }));
@@ -31,7 +31,7 @@ const expressServer = app.listen(PORT, () => {
 
 const io = new Server(expressServer, {
     cors: {
-        origin: process.env.CORS_ORIGINS || "https://yaphubers.ct.ws",
+        origin: process.env.CORS_ORIGINS.split(','),
         methods: ["GET", "POST"],
         allowedHeaders: ["Content-Type", "Authorization"],
         credentials: true
