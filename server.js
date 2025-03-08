@@ -31,10 +31,12 @@ const expressServer = app.listen(PORT, () => {
 
 const io = new Server(expressServer, {
     cors: {
-        origin: process.env.CORS_ORIGINS.split(','), // Use environment variable
-        methods: ["GET", "POST"], 
-        credentials: true 
-    }
+        origin: ["https://yaphubers.ct.ws"], // Allow only your frontend
+        methods: ["GET", "POST"],
+        allowedHeaders: ["Content-Type", "Authorization"],
+        credentials: true
+    },
+    transports: ["websocket", "polling"] // Ensure WebSockets work properly
 });
 
 io.on('connection', (socket) => {
