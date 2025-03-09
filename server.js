@@ -4,11 +4,16 @@ import fetch from 'node-fetch';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import configRouter from './config.js';
+import https from 'https';
 
 dotenv.config();
 
 const PORT = process.env.PORT || 3000;
 const ADMIN = "Admin";
+
+const httpsAgent = new https.Agent({
+    rejectUnauthorized: false, // temporary
+});
 
 const UsersState = new Map(); // Stores { socketId -> { user_id, chat_id } }
 
@@ -47,10 +52,11 @@ io.on('connection', (socket) => {
             console.log(`Attempting to validate user ${user_id} for chat ${chat_id}`);
 
             // Validate user via PHP
-            const response = await fetch(process.env.CHAT_VALIDATION_URL, { // Use environment variable
+            const response = await fetch(process.env.CHAT_VALIDATION_URL, { 
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ user_id, chat_id })
+                body: JSON.stringify({ user_id, chat_id }),
+                agent: httpsAgent // 👈 Add this
             });
 
             const rawText = await response.text();
@@ -108,10 +114,11 @@ io.on('connection', (socket) => {
             const messageData = { user_id, chat_id, text, file_url, file_type };
 
             // Store message in the database
-            const dbResponse = await fetch(process.env.SAVE_MESSAGE_URL, { // Use environment variable
+            const dbResponse = await fetch(process.env.SAVE_MESSAGE_URL, {  
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(messageData),
+                agent: httpsAgent // 👈 Add this
             });
 
             if (!dbResponse.ok) {
