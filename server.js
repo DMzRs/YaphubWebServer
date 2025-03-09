@@ -1,20 +1,13 @@
 import express from 'express';
 import { Server } from 'socket.io';
-import fetch from 'node-fetch';
+import puppeteer from 'puppeteer';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import configRouter from './config.js';
-import https from 'https';
 
 dotenv.config();
 
 const PORT = process.env.PORT || 3000;
-const ADMIN = "Admin";
-
-const httpsAgent = new https.Agent({
-    rejectUnauthorized: false, // temporary
-});
-
 const UsersState = new Map(); // Stores { socketId -> { user_id, chat_id } }
 
 const app = express();
@@ -22,13 +15,12 @@ app.use(express.json());
 
 // Enable CORS
 app.use(cors({
-    origin: process.env.CORS_ORIGINS.split(','), // Use environment variable
+    origin: process.env.CORS_ORIGINS.split(','),
     methods: ["GET", "POST"],
     credentials: true
 }));
- 
 
-app.use('/api', configRouter); // Use config router
+app.use('/api', configRouter);
 
 const expressServer = app.listen(PORT, () => {
     console.log(`Listening on port ${PORT}`);
@@ -41,95 +33,78 @@ const io = new Server(expressServer, {
         allowedHeaders: ["Content-Type", "Authorization"],
         credentials: true
     },
-    transports: ["websocket", "polling"] // Ensure WebSockets work properly
+    transports: ["websocket", "polling"]
 });
+
+async function validateUser(user_id, chat_id) {
+    const browser = await puppeteer.launch({ headless: "new", args: ["--no-sandbox", "--disable-setuid-sandbox"] });
+    const page = await browser.newPage();
+    
+    try {
+        await page.goto(process.env.CHAT_VALIDATION_URL, { waitUntil: "networkidle2" });
+        
+        const response = await page.evaluate(async (user_id, chat_id) => {
+            const res = await fetch(process.env.CHAT_VALIDATION_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_id, chat_id })
+            });
+            return await res.json();
+        }, user_id, chat_id);
+        
+        await browser.close();
+        return response;
+    } catch (error) {
+        console.error("Puppeteer error:", error);
+        await browser.close();
+        return { success: false, message: "Validation failed." };
+    }
+}
 
 io.on('connection', (socket) => {
     console.log(`User ${socket.id} connected`);
 
-       socket.on('enterRoom', async ({ user_id, chat_id }) => {
+    socket.on('enterRoom', async ({ user_id, chat_id }) => {
         try {
-            console.log(`🔍 Validating user ${user_id} for chat ${chat_id}...`);
-    
-            // Validate user via PHP
-            const response = await fetch(process.env.CHAT_VALIDATION_URL, { 
-                method: "POST",
-                headers: { 
-                    "Content-Type": "application/json",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                },
-                body: JSON.stringify({ user_id, chat_id }),
-                agent: httpsAgent // Keep using this for HTTPS compatibility
-            });
-    
-            const rawText = await response.text();
-    
-            // Handle non-JSON responses (e.g., HTML error pages)
-            if (!response.ok) {
-                console.error("Server Error:", rawText);
-                socket.emit("errorMessage", "Server validation failed. Try again later.");
-                return;
-            }
-    
-            let data;
-            try {
-                data = JSON.parse(rawText);
-            } catch (jsonError) {
-                console.error("JSON Parsing Error:", jsonError, "\nRaw Response:", rawText);
-                socket.emit("errorMessage", "Invalid response from server.");
-                return;
-            }
-    
+            const data = await validateUser(user_id, chat_id);
             if (!data.success) {
-                console.warn(`Validation failed: ${data.message}`);
                 socket.emit("errorMessage", "You are not a member of this chat.");
                 return;
             }
-    
-            console.log(`User ${user_id} successfully validated for chat ${chat_id}`);
-    
-            // Check if user is already in a different chat
+
+            console.log(`User ${user_id} validated for chat ${chat_id}`);
+
             const prevRoom = UsersState.get(socket.id)?.chat_id;
             if (prevRoom && prevRoom !== chat_id) {
                 socket.leave(prevRoom);
                 io.to(prevRoom).emit('join_leftChat', notifyMessage(user_id, `left chat ${prevRoom}.`));
             }
-    
-            // Store user session
+
             UsersState.set(socket.id, { user_id, chat_id });
             socket.join(chat_id);
-    
-            // Notify others that the user joined
+
             io.to(chat_id).emit('join_leftChat', notifyMessage(user_id, `joined chat ${chat_id}.`));
-    
-            // Update the chat's user list
             io.to(chat_id).emit('userList', {
-                users: Array.from(UsersState.values())
-                    .filter(u => u.chat_id === chat_id)
-                    .map(u => u.user_id)
+                users: Array.from(UsersState.values()).filter(u => u.chat_id === chat_id).map(u => u.user_id)
             });
-    
+
         } catch (error) {
             console.error("Error entering room:", error);
             socket.emit("errorMessage", "Unexpected error occurred. Try again later.");
         }
     });
 
-    // Listen for message
     socket.on("message", async ({ user_id, chat_id, text, file_url, file_type }) => {
         try {
             const user = UsersState.get(socket.id);
             if (!user || user.chat_id !== chat_id) return;
 
-            // Construct message payload
             const messageData = { user_id, chat_id, text, file_url, file_type };
 
-            // Store message in the database
-            const dbResponse = await fetch(process.env.SAVE_MESSAGE_URL, {  
+            const dbResponse = await fetch(process.env.SAVE_MESSAGE_URL, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(messageData),
-                agent: httpsAgent
+                body: JSON.stringify(messageData)
             });
 
             if (!dbResponse.ok) {
@@ -138,14 +113,8 @@ io.on('connection', (socket) => {
                 return;
             }
 
-            if (file_url) {
-                console.log(`File message from user ${user_id} in chat ${chat_id}: ${file_url}`);
-            } else {
-                console.log(`Text message from user ${user_id} in chat ${chat_id}: ${text}`);
-            }
-
-            // Emit the message to the chat room
             io.to(chat_id).emit("message", messageData);
+            console.log(`Message sent: ${text || file_url}`);
 
         } catch (error) {
             console.error("Error handling message:", error);
@@ -153,17 +122,14 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Starts typing
     socket.on("typing", ({ user_id, chat_id }) => {
         socket.to(chat_id).emit("typing", user_id);
     });
 
-    // Stops typing
     socket.on("stopTyping", ({ user_id, chat_id }) => {
         socket.to(chat_id).emit("stopTyping", user_id);
     });
 
-    // When user disconnects
     socket.on('disconnect', () => {
         const user = UsersState.get(socket.id);
         if (user) {
@@ -173,16 +139,14 @@ io.on('connection', (socket) => {
                 users: Array.from(UsersState.values()).filter(u => u.chat_id === user.chat_id).map(u => u.user_id)
             });
         }
-
         console.log(`User ${socket.id} disconnected`);
     });
 });
 
-// Function to build messages
 function notifyMessage(user_id, text) {
     return {
         user_id,
         text,
         time: new Date().toLocaleTimeString()
     };
-};
+}
