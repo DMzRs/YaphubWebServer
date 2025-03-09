@@ -54,16 +54,19 @@ io.on('connection', (socket) => {
             // Validate user via PHP
             const response = await fetch(process.env.CHAT_VALIDATION_URL, { 
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { 
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                },
                 body: JSON.stringify({ user_id, chat_id }),
-                agent: httpsAgent // Ensure HTTPS requests work
+                agent: httpsAgent // Keep using this for HTTPS compatibility
             });
     
             const rawText = await response.text();
     
             // Handle non-JSON responses (e.g., HTML error pages)
             if (!response.ok) {
-                console.error("🚨 Server Error:", rawText);
+                console.error("Server Error:", rawText);
                 socket.emit("errorMessage", "Server validation failed. Try again later.");
                 return;
             }
@@ -107,7 +110,7 @@ io.on('connection', (socket) => {
             });
     
         } catch (error) {
-            console.error("❗ Error entering room:", error);
+            console.error("Error entering room:", error);
             socket.emit("errorMessage", "Unexpected error occurred. Try again later.");
         }
     });
@@ -126,7 +129,7 @@ io.on('connection', (socket) => {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(messageData),
-                agent: httpsAgent // 👈 Add this
+                agent: httpsAgent
             });
 
             if (!dbResponse.ok) {
