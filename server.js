@@ -42,7 +42,7 @@ io.on('connection', (socket) => {
 
     socket.on("enterRoom", async ({ user_id, chat_id }) => {
         try {
-            console.log(`User ${user_id} attempting to join chat ${chat_id}`);
+            console.log(`User ${user_id} joined chat ${chat_id}`);
     
             // Leave previous room if exists
             const prevRoom = UsersState.get(socket.id)?.chat_id;
