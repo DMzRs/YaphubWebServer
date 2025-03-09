@@ -40,60 +40,39 @@ const io = new Server(expressServer, {
 io.on('connection', (socket) => {
     console.log(`User ${socket.id} connected`);
 
-    socket.on('enterRoom', async ({ user_id, chat_id }) => {
+    socket.on("enterRoom", async ({ user_id, chat_id }) => {
         try {
-            console.log(`Attempting to validate user ${user_id} for chat ${chat_id}`);
-
-            // Validate user via PHP
-            const response = await fetch(process.env.CHAT_VALIDATION_URL, { // Use environment variable
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ user_id, chat_id })
-            });
-
-            const rawText = await response.text();
-
-            let data;
-            try {
-                data = JSON.parse(rawText);
-                console.log("Parsed JSON:", data);
-            } catch (jsonError) {
-                console.error("JSON Parsing Error:", jsonError);
-                socket.emit("errorMessage", "Invalid server response. Please check the server logs.");
-                return;
-            }
-
-            if (!data.success) {
-                console.warn(`Validation failed: ${data.message}`);
-                socket.emit("errorMessage", "You are not a member of this chat.");
-                return;
-            }
-
-            console.log(`User ${user_id} successfully validated for chat ${chat_id}`);
-
+            console.log(`User ${user_id} attempting to join chat ${chat_id}`);
+    
             // Leave previous room if exists
             const prevRoom = UsersState.get(socket.id)?.chat_id;
             if (prevRoom) {
                 socket.leave(prevRoom);
-                io.to(prevRoom).emit('join_leftChat', notifyMessage(user_id, `left chat ${prevRoom}.`));
+                io.to(prevRoom).emit("join_leftChat", notifyMessage(user_id, `left chat ${prevRoom}.`));
             }
-
+    
             // Store user session in UsersState
             UsersState.set(socket.id, { user_id, chat_id });
             socket.join(chat_id);
-
+    
             // Notify everyone in the chat that user joined
-            io.to(chat_id).emit('join_leftChat', notifyMessage(user_id, `joined chat ${chat_id}.`));
-
+            io.to(chat_id).emit("join_leftChat", notifyMessage(user_id, `joined chat ${chat_id}.`));
+    
             // Update user list for the chat
-            io.to(chat_id).emit('userList', {
-                users: Array.from(UsersState.values()).filter(u => u.chat_id === chat_id).map(u => u.user_id)
+            io.to(chat_id).emit("userList", {
+                users: Array.from(UsersState.values()).filter((u) => u.chat_id === chat_id).map((u) => u.user_id),
             });
-
+    
         } catch (error) {
             console.error("Error entering room:", error);
             socket.emit("errorMessage", "Failed to join the chat.");
         }
+    });
+    
+    // Listen for "errorMessage" from the frontend and send it back to the same client
+    socket.on("errorMessage", (msg) => {
+        console.error("Frontend Error:", msg);
+        socket.emit("errorMessage", msg); // Send it back to the sender
     });
 
     // Listen for message
@@ -104,19 +83,6 @@ io.on('connection', (socket) => {
 
             // Construct message payload
             const messageData = { user_id, chat_id, text, file_url, file_type };
-
-            // Store message in the database
-            const dbResponse = await fetch(process.env.SAVE_MESSAGE_URL, { // Use environment variable
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(messageData),
-            });
-
-            if (!dbResponse.ok) {
-                console.error("Database error: Failed to store message");
-                socket.emit("errorMessage", "Message could not be saved.");
-                return;
-            }
 
             if (file_url) {
                 console.log(`File message from user ${user_id} in chat ${chat_id}: ${file_url}`);
@@ -132,6 +98,7 @@ io.on('connection', (socket) => {
             socket.emit("errorMessage", "Failed to send the message.");
         }
     });
+
 
     // Starts typing
     socket.on("typing", ({ user_id, chat_id }) => {
