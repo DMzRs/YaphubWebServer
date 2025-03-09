@@ -47,60 +47,68 @@ const io = new Server(expressServer, {
 io.on('connection', (socket) => {
     console.log(`User ${socket.id} connected`);
 
-    socket.on('enterRoom', async ({ user_id, chat_id }) => {
+       socket.on('enterRoom', async ({ user_id, chat_id }) => {
         try {
-            console.log(`Attempting to validate user ${user_id} for chat ${chat_id}`);
-
+            console.log(`🔍 Validating user ${user_id} for chat ${chat_id}...`);
+    
             // Validate user via PHP
             const response = await fetch(process.env.CHAT_VALIDATION_URL, { 
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ user_id, chat_id }),
-                agent: httpsAgent // 👈 Add this
+                agent: httpsAgent // Ensure HTTPS requests work
             });
-
+    
             const rawText = await response.text();
-
+    
+            // Handle non-JSON responses (e.g., HTML error pages)
+            if (!response.ok) {
+                console.error("🚨 Server Error:", rawText);
+                socket.emit("errorMessage", "Server validation failed. Try again later.");
+                return;
+            }
+    
             let data;
             try {
                 data = JSON.parse(rawText);
-                console.log("Parsed JSON:", data);
             } catch (jsonError) {
-                console.error("JSON Parsing Error:", jsonError);
-                socket.emit("errorMessage", "Invalid server response. Please check the server logs.");
+                console.error("JSON Parsing Error:", jsonError, "\nRaw Response:", rawText);
+                socket.emit("errorMessage", "Invalid response from server.");
                 return;
             }
-
+    
             if (!data.success) {
                 console.warn(`Validation failed: ${data.message}`);
                 socket.emit("errorMessage", "You are not a member of this chat.");
                 return;
             }
-
+    
             console.log(`User ${user_id} successfully validated for chat ${chat_id}`);
-
-            // Leave previous room if exists
+    
+            // Check if user is already in a different chat
             const prevRoom = UsersState.get(socket.id)?.chat_id;
-            if (prevRoom) {
+            if (prevRoom && prevRoom !== chat_id) {
                 socket.leave(prevRoom);
                 io.to(prevRoom).emit('join_leftChat', notifyMessage(user_id, `left chat ${prevRoom}.`));
             }
-
-            // Store user session in UsersState
+    
+            // Store user session
             UsersState.set(socket.id, { user_id, chat_id });
             socket.join(chat_id);
-
-            // Notify everyone in the chat that user joined
+    
+            // Notify others that the user joined
             io.to(chat_id).emit('join_leftChat', notifyMessage(user_id, `joined chat ${chat_id}.`));
-
-            // Update user list for the chat
+    
+            // Update the chat's user list
             io.to(chat_id).emit('userList', {
-                users: Array.from(UsersState.values()).filter(u => u.chat_id === chat_id).map(u => u.user_id)
+                users: Array.from(UsersState.values())
+                    .filter(u => u.chat_id === chat_id)
+                    .map(u => u.user_id)
             });
-
+    
         } catch (error) {
-            console.error("Error entering room:", error);
-            socket.emit("errorMessage", "Failed to join the chat.");
+            console.error("❗ Error entering room:", error);
+            socket.emit("errorMessage", "Unexpected error occurred. Try again later.");
         }
     });
 
