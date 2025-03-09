@@ -4,11 +4,16 @@ import fetch from 'node-fetch';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import configRouter from './config.js';
+import https from 'https';
 
 dotenv.config();
 
 const PORT = process.env.PORT || 3000;
 const ADMIN = "Admin";
+
+const httpsAgent = new https.Agent({
+    rejectUnauthorized: false, // temporary
+});
 
 const UsersState = new Map(); // Stores { socketId -> { user_id, chat_id } }
 
@@ -21,7 +26,6 @@ app.use(cors({
     methods: ["GET", "POST"],
     credentials: true
 }));
- 
 
 app.use('/api', configRouter); // Use config router
 
@@ -31,10 +35,12 @@ const expressServer = app.listen(PORT, () => {
 
 const io = new Server(expressServer, {
     cors: {
-        origin: process.env.CORS_ORIGINS.split(','), // Use environment variable
-        methods: ["GET", "POST"], 
-        credentials: true 
-    }
+        origin: process.env.CORS_ORIGINS.split(','),
+        methods: ["GET", "POST"],
+        allowedHeaders: ["Content-Type", "Authorization"],
+        credentials: true
+    },
+    transports: ["websocket", "polling"] // Ensure WebSockets work properly
 });
 
 io.on('connection', (socket) => {
@@ -46,7 +52,7 @@ io.on('connection', (socket) => {
     
             // Leave previous room if exists
             const prevRoom = UsersState.get(socket.id)?.chat_id;
-            if (prevRoom) {
+            if (prevRoom && prevRoom !== chat_id) {
                 socket.leave(prevRoom);
                 io.to(prevRoom).emit("join_leftChat", notifyMessage(user_id, `left chat ${prevRoom}.`));
             }
@@ -63,16 +69,11 @@ io.on('connection', (socket) => {
                 users: Array.from(UsersState.values()).filter((u) => u.chat_id === chat_id).map((u) => u.user_id),
             });
     
+    
         } catch (error) {
             console.error("Error entering room:", error);
-            socket.emit("errorMessage", "Failed to join the chat.");
+            socket.emit("errorMessage", "Unexpected error occurred. Try again later.");
         }
-    });
-    
-    // Listen for "errorMessage" from the frontend and send it back to the same client
-    socket.on("errorMessage", (msg) => {
-        console.error("Frontend Error:", msg);
-        socket.emit("errorMessage", msg); // Send it back to the sender
     });
 
     // Listen for message
@@ -81,7 +82,6 @@ io.on('connection', (socket) => {
             const user = UsersState.get(socket.id);
             if (!user || user.chat_id !== chat_id) return;
 
-            // Construct message payload
             const messageData = { user_id, chat_id, text, file_url, file_type };
 
             if (file_url) {
@@ -90,7 +90,6 @@ io.on('connection', (socket) => {
                 console.log(`Text message from user ${user_id} in chat ${chat_id}: ${text}`);
             }
 
-            // Emit the message to the chat room
             io.to(chat_id).emit("message", messageData);
 
         } catch (error) {
@@ -100,17 +99,15 @@ io.on('connection', (socket) => {
     });
 
 
-    // Starts typing
+
     socket.on("typing", ({ user_id, chat_id }) => {
         socket.to(chat_id).emit("typing", user_id);
     });
 
-    // Stops typing
     socket.on("stopTyping", ({ user_id, chat_id }) => {
         socket.to(chat_id).emit("stopTyping", user_id);
     });
 
-    // When user disconnects
     socket.on('disconnect', () => {
         const user = UsersState.get(socket.id);
         if (user) {
@@ -125,7 +122,6 @@ io.on('connection', (socket) => {
     });
 });
 
-// Function to build messages
 function notifyMessage(user_id, text) {
     return {
         user_id,
