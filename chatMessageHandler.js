@@ -23,7 +23,6 @@ let currentChat = null;
 let typingTimeout;
 let lastMessageTime = null;
 let messages = [];
-let config = {};
 
 // for load more button
 loadMoreBtn.innerText = "Load More...";
