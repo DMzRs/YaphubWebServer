@@ -1,6 +1,5 @@
 import express from 'express';
 import { Server } from 'socket.io';
-import fetch from 'node-fetch';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import configRouter from './config.js';
@@ -9,11 +8,6 @@ import https from 'https';
 dotenv.config();
 
 const PORT = process.env.PORT || 3000;
-const ADMIN = "Admin";
-
-const httpsAgent = new https.Agent({
-    rejectUnauthorized: false, // temporary
-});
 
 const UsersState = new Map(); // Stores { socketId -> { user_id, chat_id } }
 
